@@ -3,13 +3,16 @@ defmodule RecurringGenserver.Supervisor do
 
   use Supervisor
 
+  @doc false
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, :ok, opts)
   end
 
-  @impl true
+  @doc false
   def init(:ok) do
-    children = []
+    children = [
+      {RecurringGenserver.CoindataWorker, %{}}
+    ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end

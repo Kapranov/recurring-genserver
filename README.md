@@ -250,4 +250,273 @@ iex> Process.alive? pid(0,211,0)                    #=> true
 iex> Process.info(pid(0,211,0))
 ```
 
+Great, now let's see how we can fetch the price of a Bitcoin.
+
+Let's start `make all` with our project. The let's get the pricing data.
+We'll call `HTTPoison.get!` passing in the URL we want to want to get
+data from. We'll use the `/page` endpoint to get data about a specific
+cryptocurrency and we'll give it the ID of the coin we want to get - in
+this case BTC for Bitcoin.
+
+Great, we were able to get the data. Let's take our response body and
+pass it into `Jason.decode!`. And great, we see that the data was parsed
+and we can see the information that's provided, like the name of the
+coin, the market cap, and the current price. This is exactly the data we
+want.
+
+```bash
+bash> make all
+
+iex> response = HTTPoison.get!("http://coincap.io/page/BTC")
+#=> %HTTPoison.Response{
+      body: "{\"altCap\":107690074031.78757,
+              \"bitnodesCount\":10049,
+              \"btcCap\":113642702993.96036,
+              \"btcPrice\":6549.995,
+              \"dom\":47.27,\"totalCap\":221332777025.74805,
+              \"volumeAlt\":366910908.0875777,
+              \"volumeBtc\":328977581.10892534,
+              \"volumeTotal\":695888489.196504,
+              \"id\":\"BTC\",
+              \"type\":\"cmc\",
+              \"_id\":\"179bd7dc-72b3-4eee-b373-e719a9489ed9\",
+              \"price_btc\":1,
+              \"price_eth\":29.58510461554865,
+              \"price_ltc\":118.56576020838553,
+              \"price_zec\":50.17738313656813,
+              \"price_eur\":5685.197231839393,
+              \"price_usd\":6549.995,
+              \"market_cap\":113642702993.96036,
+              \"cap24hrChange\":1.71,
+              \"display_name\":\"Bitcoin\",
+              \"status\":\"available\",
+              \"supply\":17364012,
+              \"volume\":5200564411.33,
+              \"price\":6544.72612631,
+              \"vwap_h24\":6532.808978059005,
+              \"rank\":1,
+              \"alt_name\":\"bitcoin\"}",
+      headers: [
+        {"Date", "Wed, 07 Nov 2018 09:54:16 GMT"},
+        {"Content-Type", "application/json; charset=utf-8"},
+        {"Content-Length", "679"},
+        {"Connection", "keep-alive"},
+        {"Set-Cookie",
+          "__cfduid=d52237651f0334bf03eb7cdfd2903de1a1541584456; expires=Thu,
+          07-Nov-19 09:54:16 GMT;path=/; domain=.coincap.io; HttpOnly"},
+        {"x-powered-by", "Express"},
+        {"access-control-allow-origin", "*"},
+        {"x-content-type-options", "nosniff"},
+        {"etag", "W/\"2a7-NehEeDKpOQx6+RFsla4sdNTdQTk\""},
+        {"apicache-store", "memory"},
+        {"apicache-version", "0.8.7"},
+        {"Cache-Control", "s-maxage=60, max-age=60"},
+        {"X-Cache-Status", "EXPIRED"},
+        {"CF-Cache-Status", "HIT"},
+        {"Server", "cloudflare"},
+        {"CF-RAY", "475eeae264478af2-KBP"}
+      ],
+      request: %HTTPoison.Request{
+        body: "",
+        headers: [],
+        method: :get,
+        options: [],
+        params: %{},
+        url: "http://coincap.io/page/BTC"
+      },
+      request_url: "http://coincap.io/page/BTC",
+      status_code: 200
+    }
+
+iex> response.body |> Jason.decode!()
+#=> %{
+      "_id" => "179bd7dc-72b3-4eee-b373-e719a9489ed9",
+      "altCap" => 107690074031.78757,
+      "alt_name" => "bitcoin",
+      "bitnodesCount" => 10049,
+      "btcCap" => 113642702993.96036,
+      "btcPrice" => 6549.995,
+      "cap24hrChange" => 1.71,
+      "display_name" => "Bitcoin",
+      "dom" => 47.27,
+      "id" => "BTC",
+      "market_cap" => 113642702993.96036,
+      "price" => 6544.72612631,
+      "price_btc" => 1,
+      "price_eth" => 29.58510461554865,
+      "price_eur" => 5685.197231839393,
+      "price_ltc" => 118.56576020838553,
+      "price_usd" => 6549.995,
+      "price_zec" => 50.17738313656813,
+      "rank" => 1,
+      "status" => "available",
+      "supply" => 17364012,
+      "totalCap" => 221332777025.74805,
+      "type" => "cmc",
+      "volume" => 5200564411.33,
+      "volumeAlt" => 366910908.0875777,
+      "volumeBtc" => 328977581.10892534,
+      "volumeTotal" => 695888489.196504,
+      "vwap_h24" => 6532.808978059005
+    }
+```
+
+Then if we go into our `lib` directory, we see a module named
+`recurring_genserver`. Let's open it.
+
+When our Elixir application is started, our `start` callback is called,
+which starts our supervision tree. You can read more about applications
+in Elixir here in the Elixir docs, which I've linked to here:
+[https://hexdocs.pm/elixir/Application.html][Application]
+
+But for our project all you really need to remember is that if a worker
+module is included here in our `children` it will be started
+automatically as part of our supervision tree and will be supervised
+according to the options specified here: `strategy: one_for_one`
+
+What this means is that if something happens while we’re trying to fetch
+our data and our child process is terminated, only that process will be
+restarted. Alright, now let's create a module to do some work. Let's
+create a new module in the same directory named `coindata_worker.ex`.
+The we'll define our module.
+
+And we'll make this module a `GenServer`. If you're new to `GenServer`'s
+and want to learn more, check out episode #12 where we get an
+introduction to them. Our `GenServer` will schedule recurring work by
+sending a message to itself in a specified interval.
+
+First off let's implement the `start_link` function we'll use the
+current module and pass down any arguments. And let's make this a named
+GenServer, using the current module for the name, Then we'll implement
+the `init` callback. We'll need to return an OK tuple with our state.
+
+Now when our GenServer is started, let’s schedule the first fetch of our
+coin data. We'll do that here, so let's call a new a function we'll need
+to implement called `schedule_coin_fetch`, then let's implement it as a
+private function.
+
+Inside the function we’ll call `Process.send_after`. This allows us to
+send a message to a process after a certain interval. Let's use `self`
+for the destination process, we'll call our message `:coin_fetch`, and
+let's schedule it to happen in 5 seconds. We'll use 5 seconds here so we
+have some nice feedback when we run it. Normally we wouldn't want to
+this to be as frequent since prices are only updated every minute of so.
+
+Now we need to implement a `handle_info` callback to handle this
+message. We'll pattern match on the `:coin_fetch` atom and accept the
+current state of the GenServer.
+
+Now let's fetch our coin data. We'll take the URL we'll use to get our
+data and pipe it into `HTTPoison.get!` and then into `Map.get` to get
+the response body, then we'll decode it with `Jason.decode!`.
+
+Finally let's get the price with `Map.get`, now that we have the price
+let's print what the price was.
+
+Then we'll need to return an ‘noreply’ tuple and let's update the state
+of our GenServer to hold the current price of a Bitcoin. This will be
+triggered when our GenServer is started and the price will be logged.
+Now if we want this to keep running and print our message again in
+another 5 seconds, we'll need to make another call to our
+`schedule_coin_fetch` function. So let's add that.
+
+And let's clean our function up a bit and move the logic that fetches
+our coin price into it's own function we'll call `coin_price`.
+
+```bash
+bash> touch lib/recurring_genserver/coindata_worker.ex
+bash> touch lib/recurring_genserver/coindata.ex
+```
+
+```elixir
+# lib/recurring_genserver/coindata_worker.ex
+defmodule RecurringGenserver.CoindataWorker do
+  @moduledoc false
+
+  use GenServer
+
+  @doc false
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc false
+  def init(state) do
+    schedule_coin_fetch()
+    {:ok, state}
+  end
+
+  @doc false
+  def handle_info(:coin_fetch, state) do
+    price = coin_price()
+    IO.puts("Current Bitcoin price is $#{price}")
+    schedule_coin_fetch()
+    {:noreply, Map.put(state, :btc, price)}
+  end
+
+  @doc false
+  defp coin_price do
+    "http://coincap.io/page/BTC"
+    |> HTTPoison.get!()
+    |> Map.get(:body)
+    |> Jason.decode!()
+    |> Map.get("price_usd")
+  end
+
+  @doc false
+  defp schedule_coin_fetch do
+    Process.send_after(self(), :coin_fetch, 5_000)
+  end
+end
+```
+
+```elixir
+defmodule RecurringGenserver.Coindata do
+  @moduledoc false
+end
+```
+
+Now that our module is finished, let's add it to our supervisor. We'll
+go back to our `supervisor.ex` module. And let's include our new module
+in our children list. For the initial state we'll use an empty map.
+
+```elixir
+# lib/recurring_genserver/supervisor.ex
+defmodule RecurringGenserver.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  @doc false
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc false
+  def init(:ok) do
+    children = [
+      {RecurringGenserver.CoindataWorker, %{}}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+```
+
+Output result in console:
+
+```bash
+bash> make all
+
+iex> Current Bitcoin price is $6549.995
+     Current Bitcoin price is $6549.995
+     Current Bitcoin price is $6549.995
+     Current Bitcoin price is $6549.995
+     Current Bitcoin price is $6549.995
+     ...
+```
+
 ### 7 November 2018 by Oleg G.Kapranov
+
+[1]: https://elixircasts.io/recurring-work-with-genserver
+[2]: https://github.com/elixircastsio/058-recurring-work-genserver

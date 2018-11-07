@@ -21,7 +21,8 @@ defmodule RecurringGenserver.MixProject do
 
   def application do
     [
-      extra_applications: applications(Mix.env)
+      extra_applications: applications(Mix.env),
+      mod: {RecurringGenserver, []}
     ]
   end
 
@@ -30,6 +31,8 @@ defmodule RecurringGenserver.MixProject do
       {:credo, "~> 0.10.0", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.10.1", only: :test},
       {:ex_unit_notifier, "~> 0.1.4", only: :test},
+      {:httpoison, "~> 1.4.0"},
+      {:jason, "~> 1.1.2"},
       {:mix_test_watch, "~> 0.9.0", only: :dev, runtime: false},
       {:remix, "~> 0.0.2", only: :dev}
     ]

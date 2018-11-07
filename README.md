@@ -17,7 +17,8 @@ mkdir recurring-genserver; cd recurring-genserver
 mix new . --app recurring_genserver
 ```
 
-Install packages for static code analysis tool and test notifier.
+Then let's change into our new directory and open our project and
+install packages for static code analysis tool and test notifier.
 
 ```elixir
 # mix.exs
@@ -53,6 +54,8 @@ defmodule RecurringGenserver.MixProject do
       {:credo, "~> 0.10.0", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.10.1", only: :test},
       {:ex_unit_notifier, "~> 0.1.4", only: :test},
+      {:httpoison, "~> 1.4.0"},
+      {:jason, "~> 1.1.2"},
       {:mix_test_watch, "~> 0.9.0", only: :dev, runtime: false},
       {:remix, "~> 0.0.2", only: :dev}
     ]
@@ -166,5 +169,85 @@ all: test credo report start
 make start
 ```
 
-### 7 November 2018 by Oleg G.Kapranov
+Since our project will be fetching the price of a Bitcoin, we need a
+place to fetch Bitcoin data.
 
+Let's use the free API provided by CoinCap. We can use the `/page`
+endpoint to get data about a specific coin.
+
+Alright, now that we know where we'll want to fetch our data from, we
+just need a way to fetch the data. Let's bring in two packages to help
+us. We'll use the "HTTPoison" library to get the price data from
+CoinCap. Let's copy the package.
+
+The we'll go back to our project and open the Mixfile and add
+`httpoison` to our list of dependencies. We'll also add the
+`jason`package to help us parse the JSON that’s returned.
+
+Let's create for supervisor tree a file 'supervisor.ex'
+
+```bash
+mkdir lib/recurring_genserver/
+touch lib/recurring_genserver/supervisor.ex
+```
+
+```elixir
+# mix.exs
+defmodule RecurringGenserver.MixProject do
+  use Mix.Project
+
+  # ...
+
+  def application do
+    [
+      extra_applications: applications(Mix.env),
+      mod: {RecurringGenserver, []}
+    ]
+  end
+
+  # ...
+
+end
+
+# lib/recurring_genserver.ex
+defmodule RecurringGenserver do
+  @moduledoc false
+
+  use Application
+
+  def start(_type, _args) do
+    RecurringGenserver.Supervisor.start_link(
+      name: RecurringGenserver.Supervisor
+    )
+  end
+end
+
+# lib/recurring_genserver/supervisor.ex
+defmodule RecurringGenserver.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, :ok, opts)
+  end
+
+  @impl true
+  def init(:ok) do
+    children = []
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+end
+```
+
+Then let's go to the command line and download our dependencies.
+`make all` and then `:observer.start`
+
+```bash
+iex> Process.whereis RecurringGenserver.Supervisor  #=> #PID<0.211.0>
+iex> Process.alive? pid(0,211,0)                    #=> true
+iex> Process.info(pid(0,211,0))
+```
+
+### 7 November 2018 by Oleg G.Kapranov

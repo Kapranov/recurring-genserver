@@ -2,7 +2,7 @@ defmodule RecurringGenserverTest do
   use ExUnit.Case
   doctest RecurringGenserver
 
-  test "greets the world" do
-    assert RecurringGenserver.hello() == :world
+  test "the truth" do
+    assert 1 + 1 == 2
   end
 end

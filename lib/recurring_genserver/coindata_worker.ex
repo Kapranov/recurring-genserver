@@ -3,9 +3,12 @@ defmodule RecurringGenserver.CoindataWorker do
 
   use GenServer
 
+  alias RecurringGenserver.Coindata
+
   @doc false
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+    id = Map.get(opts, :id)
+    GenServer.start_link(__MODULE__, opts, name: id)
   end
 
   @doc false
@@ -16,19 +19,22 @@ defmodule RecurringGenserver.CoindataWorker do
 
   @doc false
   def handle_info(:coin_fetch, state) do
-    price = coin_price()
-    IO.puts("Current Bitcoin price is $#{price}")
-    schedule_coin_fetch()
-    {:noreply, Map.put(state, :btc, price)}
+    updated_state = state
+      |> Map.get(:id)
+      |> Coindata.fetch()
+      |> update_state(state)
+
+    if updated_state[:price] != state[:price] do
+      # credo:disable-for-next-line
+      IO.inspect("Current #{updated_state[:name]} price is $#{updated_state[:price]}")
+    end
+
+    {:noreply, updated_state}
   end
 
   @doc false
-  defp coin_price do
-    "http://coincap.io/page/BTC"
-    |> HTTPoison.get!()
-    |> Map.get(:body)
-    |> Jason.decode!()
-    |> Map.get("price_usd")
+  defp update_state(%{"display_name" => name, "price" => price}, existing_state) do
+    Map.merge(existing_state, %{name: name, price: price})
   end
 
   @doc false

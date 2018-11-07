@@ -503,7 +503,16 @@ defmodule RecurringGenserver.Supervisor do
 end
 ```
 
-Output result in console:
+Now let's go to the command line and run `make all` with our project. And we
+see the price of a Bitcoin is being logged.
+
+Let's also start our `:observer.start`. And if we click on the "applications"
+tab we see our supervisor and it has a single child process - our
+`CoindataWorker`.
+
+We see it's named this in the observer since we added the module for the
+name earlier. And if we go to it and then click the "state" tab we see
+the state of our GenServer has the current price of a Bitcoin.
 
 ```bash
 bash> make all
@@ -515,6 +524,333 @@ iex> Current Bitcoin price is $6549.995
      Current Bitcoin price is $6549.995
      ...
 ```
+
+This is great - we're fetching data from the API, parsing it, and
+logging the price. Then our GenServer is scheduling itself to fetch the
+price again in the future.
+
+This is pretty cool. But now let's say we wanted to get the prices of
+other cryptocurrencies - not just Bitcoin. How can we update our program
+to do that?
+
+Let's go our `coindata_worker.ex` module. There are a couple different
+ways we could do this. We could store the price for any cryptocurrency
+we wanted to track in this single GenServer process. However let's
+create a CoinDataWorker process for each cryptocurrency we want to
+track.
+
+To differentiate what coin we want to track, let's pass the ID of the
+coin in the arguments. So for bitcoin it will be `:btc` as a lowercase
+atom.
+
+Our args will be a map, so let's grab the ID from them. And because we
+can't start multiple GenServers with the same name, let's use the ID for
+the name.
+
+Since we want to make the lookup for the coin we are getting data for
+dynamic, let's go to our `handle_info` callback. And we've hardcoded
+this to be about Bitcoin, so let's fix that.
+
+First since we'll have access to the coin's ID in our state, let's get
+that. We'll take our state and pipe it into `Map.get` :id to get the id.
+
+Then let's pipe it into our `coin_price` function. But we'll now want
+this to return more data than just the price. In fact let's rename it to
+`coindata` and have it return all the coin data we get back from the API.
+Then we'll go where we've defined our `coin_price` function, rename it,
+and update it to take the ID.
+
+Since the ID will be a lowercase atom, we'll need to convert to an
+uppercase string to use in the URL. So let's take our ID and pipe it
+into `Atom.to_string` then we'll pipe our string into `String.upcase`
+
+Now that we'll have our coin ID we can use it in our URL. Let's create
+another function we'll add to our pipeline to build our URL. Let's call
+it `url`.
+
+We'll define our new function `url` and it will take the ID. Then in the
+function we'll update our URL and append the ID to it. Then back in our
+`coindata` function we'll get the response body and decode the JSON just
+like before, only now let's return the whole data map.
+
+Alright, now that we are returning all our data, let's create a way to
+merge our existing state with the data we care about. Let's add a new
+function to our pipeline called `update_state` that we'll need to
+implement. It will take our new data and our existing state.
+
+Then let's define it as a private function and let's pattern match on
+our new data to get the name of the coin and the price.
+
+Then inside the function we'll call `Map.merge` to update our existing
+state with our new values. Great then back in our `handle_info` callback.
+We're no longer returning a price, so let's change the variable name to
+`updated_state`, and let's update our message.
+
+Now this will log the current price of a cryptocurrency regardless of
+whether the price has changed or not. This is pretty noisy and will be
+even worse now that we want to track more coins. So let's update this
+to only print if our new price is different than our existing price.
+Finally let’s return our `updated_state`.
+
+```elixir
+# lib/recurring_genserver/coindata_worker.ex
+defmodule RecurringGenserver.CoindataWorker do
+  @moduledoc false
+
+  use GenServer
+
+  @doc false
+  def start_link(opts) do
+    id = Map.get(opts, :id)
+    GenServer.start_link(__MODULE__, opts, name: id)
+  end
+
+  @doc false
+  def init(state) do
+    schedule_coin_fetch()
+    {:ok, state}
+  end
+
+  @doc false
+  def handle_info(:coin_fetch, state) do
+    updated_state = state
+      |> Map.get(:id)
+      |> coin_data()
+      |> update_state(state)
+
+    if updated_state[:price] != state[:price] do
+      # credo:disable-for-next-line
+      IO.inspect("Current #{updated_state[:name]} price is $#{updated_state[:price]}")
+    end
+
+    {:noreply, updated_state}
+  end
+
+  @doc false
+  defp coin_data(id) do
+    id
+    |> Atom.to_string()
+    |> String.upcase()
+    |> url()
+    |> HTTPoison.get!()
+    |> Map.get(:body)
+    |> Jason.decode!()
+  end
+
+  @doc false
+  defp url(id) do
+    "http://coincap.io/page/" <> id
+  end
+
+  @doc false
+  defp update_state(%{"display_name" => name, "price" => price}, existing_state) do
+    Map.merge(existing_state, %{name: name, price: price})
+  end
+
+  @doc false
+  defp schedule_coin_fetch do
+    Process.send_after(self(), :coin_fetch, 5_000)
+  end
+end
+```
+
+Great, now this will work, but let's break up our module a bit. Let's
+move the logic that fetches the coin data into its own module.
+
+We'll create a new module named `coindata.ex`, then let's give it a
+public function named fetch and back in our `coindata_worker.ex` let's
+copy our two functions that fetch the coin data - `url` and `coindata`.
+Then let's paste them into the `coindata.ex` module. And we'll move our
+pipeline from the `coindata` function into the `fetch` function and
+update it to take an ID.
+
+```elixir
+# lib/recurring_genserver/coindata.ex
+defmodule RecurringGenserver.Coindata do
+  @moduledoc false
+
+  @doc false
+  def fetch(id) do
+    id
+    |> Atom.to_string()
+    |> String.upcase()
+    |> url()
+    |> HTTPoison.get!()
+    |> Map.get(:body)
+    |> Jason.decode!()
+  end
+
+  defp url(id) do
+    "http://coincap.io/page/" <> id
+  end
+end
+```
+
+Then we'll go back to our `coindata_worker.ex` module and where we were
+calling the `coindata` function, we'll now call `Coindata.fetch` and
+let's add an alias for it so we can call it without the prefix.
+
+```elixir
+# lib/recurring_genserver/coindata_worker.ex
+defmodule RecurringGenserver.CoindataWorker do
+  @moduledoc false
+
+  use GenServer
+
+  alias RecurringGenserver.Coindata
+
+  @doc false
+  def start_link(opts) do
+    id = Map.get(opts, :id)
+    GenServer.start_link(__MODULE__, opts, name: id)
+  end
+
+  @doc false
+  def init(state) do
+    schedule_coin_fetch()
+    {:ok, state}
+  end
+
+  @doc false
+  def handle_info(:coin_fetch, state) do
+    updated_state = state
+      |> Map.get(:id)
+      |> Coindata.fetch()
+      |> update_state(state)
+
+    if updated_state[:price] != state[:price] do
+      # credo:disable-for-next-line
+      IO.inspect("Current #{updated_state[:name]} price is $#{updated_state[:price]}")
+    end
+
+    {:noreply, updated_state}
+  end
+
+  @doc false
+  defp update_state(%{"display_name" => name, "price" => price}, existing_state) do
+    Map.merge(existing_state, %{name: name, price: price})
+  end
+
+  @doc false
+  defp schedule_coin_fetch do
+    Process.send_after(self(), :coin_fetch, 5_000)
+  end
+end
+```
+
+Now let's go to our `supervisor.ex` module. And let's keep this simple
+and just add a new private function named `get_children`. Then we'll
+call `Enum.map` with a list of the coin IDs we want to track - Bitcoin,
+Ethereum , and Litecoin.
+
+Let's return our `RecurringGenserver.CoindataWorker` and we'll need to
+include a map that has the coin ID so our module can use it. Then let's
+update our `start` callback to use our new function.
+
+```elixir
+# lib/recurring_genserver/supervisor.ex
+defmodule RecurringGenserver.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  @doc false
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc false
+  def init(:ok) do
+    children = get_children()
+
+    opts = [strategy: :one_for_one, name: RecurringGenserver.Supervisor]
+
+    Supervisor.init(children, opts)
+  end
+
+  @doc false
+  defp get_children do
+    Enum.map([:btc, :eth, :ltc], fn(coin) ->
+      {RecurringGenserver.CoindataWorker, %{id: coin}}
+    end)
+  end
+end
+```
+
+Then let's go to the command line and start `make all` with our project -
+and we get an error. Elixir is telling up that multiple child specifications
+are using the same ID.
+
+But if we read farther down, Elixir tells us that we can customize the
+ID with the `Supervisor.child_spec`  function, giving it a unique ID. So
+let's do that.
+
+```bash
+** (Mix) Could not start application recurring_genserver:
+RecurringGenserver.start(:normal, []) returned an error:
+If using maps as child specifications, make sure the :id keys are unique.
+If using a module or {module, arg} as child, use Supervisor.child_spec/2
+to change the :id, for example:
+
+    children = [
+      Supervisor.child_spec({MyWorker, arg}, id: :my_worker_1),
+      Supervisor.child_spec({MyWorker, arg}, id: :my_worker_2)
+    ]
+```
+
+We'll go back to our `supervisor.ex` module and update our `get_children`
+function to use `Supervisor.child_spec` and we'll use the coin ID for the
+ID.
+
+```elixir
+# lib/recurring_genserver/supervisor.ex
+defmodule RecurringGenserver.Supervisor do
+  @moduledoc false
+
+  use Supervisor
+
+  @doc false
+  def start_link(opts) do
+    Supervisor.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc false
+  def init(:ok) do
+    children = get_children()
+
+    opts = [strategy: :one_for_one, name: RecurringGenserver.Supervisor]
+
+    Supervisor.init(children, opts)
+  end
+
+  @doc false
+  defp get_children do
+    Enum.map([:btc, :eth, :ltc], fn(coin) ->
+      Supervisor.child_spec({RecurringGenserver.CoindataWorker, %{id: coin}}, id: coin)
+    end)
+  end
+end
+```
+
+Now we can start our project again. And perfect, the prices for our
+three coins are printed.
+
+```bash
+bash> make all
+
+iex> "Current Bitcoin  price is $6540.25807609"
+     "Current Ethereum price is $217.821259803"
+     "Current Litecoin price is $54.2257445259"
+
+iex> :observer.start
+```
+
+And let's start the observer. Because we are using the coin ID for the
+GenServer name, we see all three of our processes have the coin ID for
+their name. Let's choose one. And click the "state" tab.
+
+Perfect, we see all the information is stored. Our program is working
+and printing the price for us when it change.
 
 ### 7 November 2018 by Oleg G.Kapranov
 

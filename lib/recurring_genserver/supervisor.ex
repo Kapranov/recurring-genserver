@@ -10,10 +10,17 @@ defmodule RecurringGenserver.Supervisor do
 
   @doc false
   def init(:ok) do
-    children = [
-      {RecurringGenserver.CoindataWorker, %{}}
-    ]
+    children = get_children()
 
-    Supervisor.init(children, strategy: :one_for_one)
+    opts = [strategy: :one_for_one, name: RecurringGenserver.Supervisor]
+
+    Supervisor.init(children, opts)
+  end
+
+  @doc false
+  defp get_children do
+    Enum.map([:btc, :eth, :ltc], fn(coin) ->
+      Supervisor.child_spec({RecurringGenserver.CoindataWorker, %{id: coin}}, id: coin)
+    end)
   end
 end
